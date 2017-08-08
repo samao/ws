@@ -1,9 +1,11 @@
 'use strict';
 
+const safeBuffer = require('safe-buffer');
 const cluster = require('cluster');
 
-const WebSocket = require('../');
+const WebSocket = require('..');
 
+const Buffer = safeBuffer.Buffer;
 const port = 8181;
 
 if (cluster.isMaster) {
@@ -15,7 +17,7 @@ if (cluster.isMaster) {
   }, () => cluster.fork());
 
   wss.on('connection', (ws) => {
-    ws.on('message', (data, flags) => ws.send(data, { binary: flags.binary || false }));
+    ws.on('message', (data) => ws.send(data));
   });
 
   cluster.on('exit', () => wss.close());
@@ -69,7 +71,7 @@ if (cluster.isMaster) {
       if (++roundtrip !== roundtrips) return ws.send(data, { binary: useBinary });
 
       var elapsed = process.hrtime(time);
-      elapsed = elapsed[0] * 1e9 + elapsed[1];
+      elapsed = (elapsed[0] * 1e9) + elapsed[1];
 
       console.log(
         '%d roundtrips of %s %s data:\t%ss\t%s',

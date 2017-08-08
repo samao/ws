@@ -34,8 +34,8 @@ function makePathForFile (filePath, prefix, cb) {
     if (error) return cb(error);
     if (pieces.length === 0) return cb(null, incrementalPath);
     incrementalPath += '/' + pieces.shift();
-    fs.exists(incrementalPath, function (exists) {
-      if (!exists) fs.mkdir(incrementalPath, step);
+    fs.access(incrementalPath, function (err) {
+      if (err) fs.mkdir(incrementalPath, step);
       else process.nextTick(step);
     });
   }
@@ -60,8 +60,8 @@ wss.on('connection', function (ws) {
 
   var filesReceived = 0;
   var currentFile = null;
-  ws.on('message', function (data, flags) {
-    if (!flags.binary) {
+  ws.on('message', function (data) {
+    if (typeof data === 'string') {
       currentFile = JSON.parse(data);
       // note: a real-world app would want to sanity check the data
     } else {

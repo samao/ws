@@ -51,10 +51,11 @@ if `verifyClient` is provided with two arguments then those are:
 
 
 If `handleProtocols` is not set then the handshake is automatically accepted,
-otherwise the function takes a single argument:
+otherwise the function takes two arguments:
 
 - `protocols` {Array} The list of WebSocket subprotocols indicated by the
   client in the `Sec-WebSocket-Protocol` header.
+- `request` {http.IncomingMessage} The client HTTP GET request.
 
 If returned value is `false` then the handshake is rejected with the HTTP 401
 status code, otherwise the returned value sets the value of the
@@ -62,7 +63,7 @@ status code, otherwise the returned value sets the value of the
 
 `perMessageDeflate` can be used to control the behavior of
 [permessage-deflate extension][permessage-deflate].
-The extension is disabled when `false`. Defaults to `true`. If an object is
+The extension is disabled when `false` (default value). If an object is
 provided then that is extension parameters:
 
 - `serverNoContextTakeover` {Boolean} Whether to use context take over or not.
@@ -88,8 +89,11 @@ provided.
 ### Event: 'connection'
 
 - `socket` {WebSocket}
+- `request` {http.IncomingMessage}
 
-Emitted when the handshake is complete. `socket` is an instance of `WebSocket`.
+Emitted when the handshake is complete. `request` is the http GET request sent
+by the client. Useful for parsing authority headers, cookie headers, and other
+information.
 
 ### Event: 'error'
 
@@ -100,6 +104,7 @@ Emitted when an error occurs on the underlying server.
 ### Event: 'headers'
 
 - `headers` {Array}
+- `request` {http.IncomingMessage}
 
 Emitted before the response headers are written to the socket as part of the
 handshake. This allows you to inspect/modify the headers before they are sent.
@@ -131,7 +136,7 @@ when the HTTP server is passed via the `server` option, this method is called
 automatically. When operating in "noServer" mode, this method must be called
 manually.
 
-If the upgrade is successfull, the `callback` is called with a `WebSocket`
+If the upgrade is successful, the `callback` is called with a `WebSocket`
 object as parameter.
 
 ### server.shouldHandle(request)
@@ -144,7 +149,7 @@ against the `path` option if provided.
 The return value, `true` or `false`, determines whether or not to accept the
 handshake.
 
-This method can be overriden when a custom handling logic is required.
+This method can be overridden when a custom handling logic is required.
 
 ## Class: WebSocket
 
@@ -165,6 +170,7 @@ This class represents a WebSocket. It extends the `EventEmitter`.
 - `protocols` {String|Array} The list of subprotocols.
 - `options` {Object}
   - `protocol` {String} Value of the `Sec-WebSocket-Protocol` header.
+  - `handshakeTimeout` {Number} Timeout in milliseconds for the handshake request.
   - `perMessageDeflate` {Boolean|Object} Enable/disable permessage-deflate.
   - `localAddress` {String} Local interface to bind for network connections.
   - `protocolVersion` {Number} Value of the `Sec-WebSocket-Version` header.
@@ -184,11 +190,29 @@ This class represents a WebSocket. It extends the `EventEmitter`.
   - `pfx` {String|Buffer} The private key, certificate, and CA certs.
   - `ca` {Array} Trusted certificates.
 
-`perMessageDeflate` parameters are the same of the server, the only difference
-is the direction of requests (e.g. `serverNoContextTakeover` is the value to be
-requested to the server).
+`perMessageDeflate` default value is `true`. When using an object, parameters
+are the same of the server. The only difference is the direction of requests
+(e.g. `serverNoContextTakeover` is the value to be requested to the server).
 
 Create a new WebSocket instance.
+
+#### UNIX Domain Sockets
+
+`ws` supports making requests to UNIX domain sockets. To make one, use the
+following URL scheme:
+
+```
+ws+unix:///absolute/path/to/uds_socket:/pathname?search_params
+```
+
+Note that `:` is the separator between the socket path and the URL path. If
+the URL path is omitted
+
+```
+ws+unix:///absolute/path/to/uds_socket
+```
+
+it defaults to `/`.
 
 ### Event: 'close'
 
@@ -206,12 +230,18 @@ human-readable string explaining why the connection has been closed.
 Emitted when an error occurs. Errors from the underlying `net.Socket` are
 forwarded here.
 
+### Event: 'headers'
+
+- `headers` {Object}
+- `response` {http.IncomingMessage}
+
+Emitted when response headers are received from the server as part of the
+handshake.  This allows you to read headers from the server, for example
+'set-cookie' headers.
+
 ### Event: 'message'
 
-- `data` {String|Buffer}
-- `flags` {Object}
-  - `binary` {Boolean} Specifies if `data` is binary.
-  - `masked` {Boolean} Specifies if `data` was masked.
+- `data` {String|Buffer|ArrayBuffer|Buffer[]}
 
 Emitted when a message is received from the server.
 
@@ -222,18 +252,12 @@ Emitted when the connection is established.
 ### Event: 'ping'
 
 - `data` {Buffer}
-- `flags` {Object}
-  - `binary` {Boolean} Specifies if `data` is binary.
-  - `masked` {Boolean} Specifies if `data` was masked.
 
 Emitted when a ping is received from the server.
 
 ### Event: 'pong'
 
 - `data` {Buffer}
-- `flags` {Object}
-  - `binary` {Boolean} Specifies if `data` is binary.
-  - `masked` {Boolean} Specifies if `data` was masked.
 
 Emitted when a pong is received from the server.
 
@@ -259,7 +283,10 @@ Register an event listener emulating the `EventTarget` interface.
 - {String}
 
 A string indicating the type of binary data being transmitted by the connection.
-This should be either "nodebuffer" or "arraybuffer". Defaults to "nodebuffer".
+This should be one of "nodebuffer", "arraybuffer" or "fragments". Defaults to
+"nodebuffer". Type "fragments" will emit the array of fragments as received from
+the sender, without copyfull concatenation, which is useful for the performance
+of binary protocols transferring large messages with multiple fragments.
 
 ### websocket.bufferedAmount
 
@@ -333,7 +360,7 @@ Send a ping.
 
 ### websocket.pong([data[, mask[, failSilently]]])
 
-- `data` {Any} The data to send in the ping frame.
+- `data` {Any} The data to send in the pong frame.
 - `mask` {Boolean} Specifies whether `data` should be masked or not. Defaults
   to `true` when `websocket` is not a server client.
 - `failSilently` {Boolean} Specifies whether or not to throw an error if the
@@ -368,7 +395,7 @@ Removes an event listener emulating the `EventTarget` interface.
 
 ### websocket.resume()
 
-Resume the socket
+Resume the socket.
 
 ### websocket.send(data, [options][, callback])
 
@@ -385,18 +412,11 @@ Resume the socket
 - `callback` {Function} An optional callback which is invoked when `data` is
   written out.
 
-Sends `data` through the connection.
+Send `data` through the connection.
 
 ### websocket.terminate()
 
-Send a FIN packet to the other peer.
-
-### websocket.upgradeReq
-
-- {http.IncomingMessage}
-
-The http GET request sent by the client. Useful for parsing authority headers,
-cookie headers, and other information. This is only available for server clients.
+Forcibly close the connection.
 
 ### websocket.url
 

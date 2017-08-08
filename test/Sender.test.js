@@ -1,17 +1,19 @@
 'use strict';
 
+const safeBuffer = require('safe-buffer');
 const assert = require('assert');
 
 const PerMessageDeflate = require('../lib/PerMessageDeflate');
 const Sender = require('../lib/Sender');
 
+const Buffer = safeBuffer.Buffer;
+
 describe('Sender', function () {
-  describe('#frameAndSend', function () {
-    it('does not modify a masked binary buffer', function () {
-      const sender = new Sender({ write: () => {} });
+  describe('.frame', function () {
+    it('does not mutate the input buffer if data is `readOnly`', function () {
       const buf = Buffer.from([1, 2, 3, 4, 5]);
 
-      sender.frameAndSend(buf, {
+      Sender.frame(buf, {
         readOnly: true,
         rsv1: false,
         mask: true,
@@ -22,54 +24,16 @@ describe('Sender', function () {
       assert.ok(buf.equals(Buffer.from([1, 2, 3, 4, 5])));
     });
 
-    it('does not modify a masked text buffer', function () {
-      const sender = new Sender({ write: () => {} });
-      const text = Buffer.from('hi there');
-
-      sender.frameAndSend(text, {
-        readOnly: true,
-        rsv1: false,
-        mask: true,
-        opcode: 1,
-        fin: true
-      });
-
-      assert.ok(text.equals(Buffer.from('hi there')));
-    });
-
-    it('sets RSV1 bit if compressed', function (done) {
-      const sender = new Sender({
-        write: (data) => {
-          assert.strictEqual(data[0] & 0x40, 0x40);
-          done();
-        }
-      });
-
-      sender.frameAndSend(Buffer.from('hi'), {
+    it('sets RSV1 bit if compressed', function () {
+      const list = Sender.frame(Buffer.from('hi'), {
         readOnly: false,
         mask: false,
         rsv1: true,
         opcode: 1,
         fin: true
       });
-    });
-  });
 
-  describe('#ping', function () {
-    it('works with multiple types of data', function (done) {
-      let count = 0;
-      const sender = new Sender({
-        write: (data) => {
-          assert.ok(data.equals(Buffer.from([0x89, 0x02, 0x68, 0x69])));
-          if (++count === 3) done();
-        }
-      });
-
-      const array = new Uint8Array([0x68, 0x69]);
-
-      sender.ping(array.buffer, false);
-      sender.ping(array, false);
-      sender.ping('hi', false);
+      assert.strictEqual(list[0][0] & 0x40, 0x40);
     });
   });
 
@@ -160,30 +124,6 @@ describe('Sender', function () {
       sender.send('123', { compress: true, fin: true });
     });
 
-    it('compresses null as first fragment', function (done) {
-      const fragments = [];
-      const perMessageDeflate = new PerMessageDeflate({ threshold: 0 });
-      const sender = new Sender({
-        write: (data) => {
-          fragments.push(data);
-          if (fragments.length !== 2) return;
-
-          assert.strictEqual(fragments[0][0] & 0x40, 0x40);
-          assert.strictEqual(fragments[0].length, 3);
-          assert.strictEqual(fragments[1][0] & 0x40, 0x00);
-          assert.strictEqual(fragments[1].length, 8);
-          done();
-        }
-      }, {
-        'permessage-deflate': perMessageDeflate
-      });
-
-      perMessageDeflate.accept([{}]);
-
-      sender.send(null, { compress: true, fin: false });
-      sender.send('data', { compress: true, fin: true });
-    });
-
     it('compresses empty buffer as first fragment', function (done) {
       const fragments = [];
       const perMessageDeflate = new PerMessageDeflate({ threshold: 0 });
@@ -206,30 +146,6 @@ describe('Sender', function () {
 
       sender.send(Buffer.alloc(0), { compress: true, fin: false });
       sender.send('data', { compress: true, fin: true });
-    });
-
-    it('compresses null last fragment', function (done) {
-      const fragments = [];
-      const perMessageDeflate = new PerMessageDeflate({ threshold: 0 });
-      const sender = new Sender({
-        write: (data) => {
-          fragments.push(data);
-          if (fragments.length !== 2) return;
-
-          assert.strictEqual(fragments[0][0] & 0x40, 0x40);
-          assert.strictEqual(fragments[0].length, 12);
-          assert.strictEqual(fragments[1][0] & 0x40, 0x00);
-          assert.strictEqual(fragments[1].length, 3);
-          done();
-        }
-      }, {
-        'permessage-deflate': perMessageDeflate
-      });
-
-      perMessageDeflate.accept([{}]);
-
-      sender.send('data', { compress: true, fin: false });
-      sender.send(null, { compress: true, fin: true });
     });
 
     it('compresses empty buffer as last fragment', function (done) {
@@ -276,6 +192,58 @@ describe('Sender', function () {
 
       sender.processing = false;
       sender.send('hi', { compress: false, fin: true });
+    });
+  });
+
+  describe('#ping', function () {
+    it('works with multiple types of data', function (done) {
+      const perMessageDeflate = new PerMessageDeflate({ threshold: 0 });
+      let count = 0;
+      const sender = new Sender({
+        write: (data) => {
+          if (++count === 1) return;
+
+          assert.ok(data.equals(Buffer.from([0x89, 0x02, 0x68, 0x69])));
+          if (count === 4) done();
+        }
+      }, {
+        'permessage-deflate': perMessageDeflate
+      });
+
+      perMessageDeflate.accept([{}]);
+
+      const array = new Uint8Array([0x68, 0x69]);
+
+      sender.send('foo', { compress: true, fin: true });
+      sender.ping(array.buffer, false);
+      sender.ping(array, false);
+      sender.ping('hi', false);
+    });
+  });
+
+  describe('#pong', function () {
+    it('works with multiple types of data', function (done) {
+      const perMessageDeflate = new PerMessageDeflate({ threshold: 0 });
+      let count = 0;
+      const sender = new Sender({
+        write: (data) => {
+          if (++count === 1) return;
+
+          assert.ok(data.equals(Buffer.from([0x8a, 0x02, 0x68, 0x69])));
+          if (count === 4) done();
+        }
+      }, {
+        'permessage-deflate': perMessageDeflate
+      });
+
+      perMessageDeflate.accept([{}]);
+
+      const array = new Uint8Array([0x68, 0x69]);
+
+      sender.send('foo', { compress: true, fin: true });
+      sender.pong(array.buffer, false);
+      sender.pong(array, false);
+      sender.pong('hi', false);
     });
   });
 
